@@ -52,7 +52,7 @@ aside{border-radius:30px;padding:22px;display:flex;flex-direction:column;gap:18p
 .list{flex:1;overflow:auto;display:grid;gap:10px;align-content:start}
 .fr{display:flex;align-items:center;gap:12px;padding:12px;border-radius:18px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12)}
 .fr .ava{width:40px;height:40px;border-radius:14px;font-size:16px;background:linear-gradient(135deg,var(--a3),var(--a1))}
-.fr div{flex:1;min-width:0}.fr small{color:var(--dim);display:block}
+.fr>div:not(.ava){flex:1;min-width:0}.fr small{color:var(--dim);display:block}
 .ic{position:relative;width:38px;height:38px;border-radius:13px;border:1px solid var(--line);background:rgba(255,255,255,.1);cursor:pointer;display:grid;place-items:center}
 .ic:hover{background:rgba(255,255,255,.22)}.ic.call{background:linear-gradient(135deg,var(--a1),var(--a2));color:var(--on)}
 svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -112,7 +112,7 @@ svg.lg{width:24px;height:24px}
 
 <section id="app" hidden>
   <aside class="glass">
-    <div class="me"><div class="ava" id="meAva"></div><div><b id="meNick"></b><span><i class="dot" id="dot"></i><span id="meUser"></span></span></div></div>
+    <div class="me"><div class="ava" id="meAva"></div><div><b id="meNick"></b><span><i class="dot" id="dot"></i><span id="meUser"></span></span><span id="st" style="display:block;margin-top:3px;cursor:pointer"></span></div></div>
     <form class="add" id="af" autocomplete="off"><input id="fu" placeholder="Найти по юзернейму" maxlength="20"><button class="btn main" title="Добавить"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></form>
     <div class="list" id="list"></div>
     <div class="themes" id="themes"></div>
@@ -143,6 +143,7 @@ svg.lg{width:24px;height:24px}
 <div id="toast" class="glass" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>window.Peer||document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"><\/script>')</script>
 <script>
 const $=s=>document.querySelector(s), PFX='aura-';
 const store={get(k,d){try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
@@ -167,17 +168,34 @@ function start(){
   $('#login').hidden=true;$('#app').hidden=false;
   $('#meAva').textContent=initial(me.nick);$('#meNick').textContent=me.nick;$('#meUser').textContent='@'+me.user;
   renderFriends();
-  peer=new Peer(PFX+me.user);
-  peer.on('open',()=>$('#dot').classList.add('on'));
-  peer.on('disconnected',()=>{$('#dot').classList.remove('on');try{peer.reconnect()}catch{}});
-  peer.on('error',e=>{
-    if(e.type==='unavailable-id'){try{localStorage.removeItem('me')}catch{}$('#app').hidden=true;$('#login').hidden=false;$('#err').textContent='Этот юзернейм занят или ещё не освободился. Попробуйте другой.';peer.destroy()}
-    else if(e.type==='peer-unavailable'){toast('Друг не в сети или такого юзернейма нет');if(!calls.size)endAll()}
-    else toast('Ошибка связи: '+e.type);
-  });
-  peer.on('connection',setupConn);
-  peer.on('call',onCall);
+  connect();
 }
+const ICE=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}];
+const NETERR=['network','server-error','socket-error','socket-closed'];
+function setSt(t,on){$('#st').textContent=t;$('#dot').classList.toggle('on',!!on)}
+function connect(){
+  clearTimeout(connect.t);
+  if(peer){try{peer.destroy()}catch{}}
+  setSt('Подключение к серверу поиска…');
+  if(typeof Peer==='undefined'){setSt('Не загрузилась библиотека связи. Проверьте интернет и нажмите здесь');return}
+  peer=new Peer(PFX+me.user,{config:{iceServers:ICE}});
+  const p=peer;
+  connect.t=setTimeout(()=>{if(!p.open)setSt('Сервер поиска не отвечает. Нажмите здесь, чтобы повторить')},12000);
+  p.on('open',()=>{clearTimeout(connect.t);setSt('В сети: друзья могут вас найти',true)});
+  p.on('disconnected',()=>{
+    if(p.destroyed)return;setSt('Связь с сервером потеряна, переподключаюсь…');
+    setTimeout(()=>{if(!p.destroyed&&p.disconnected){try{p.reconnect()}catch{}}},3000);
+  });
+  p.on('error',e=>{
+    if(e.type==='unavailable-id'){try{localStorage.removeItem('me')}catch{}$('#app').hidden=true;$('#login').hidden=false;$('#err').textContent='Этот юзернейм занят или ещё не освободился. Попробуйте другой.';p.destroy()}
+    else if(e.type==='peer-unavailable'){toast('Друг не в сети или такого юзернейма нет');if(!calls.size)endAll()}
+    else if(NETERR.includes(e.type)){setSt('Нет связи с сервером поиска ('+e.type+'). Возможно, сеть его блокирует. Нажмите, чтобы повторить')}
+    else{setSt('Ошибка связи ('+e.type+'). Нажмите здесь, чтобы повторить');toast('Ошибка связи: '+e.type)}
+  });
+  p.on('connection',setupConn);
+  p.on('call',onCall);
+}
+$('#st').onclick=()=>{if(!peer||!peer.open)connect()};
 if(me){start()}else{$('#login').hidden=false}
 
 /* ---------- друзья ---------- */
@@ -240,6 +258,7 @@ async function callPeer(id,nick){
   const call=peer.call(id,s,{metadata:{nick:me.nick}});
   bindCall(call,nick);
   setupConn(peer.connect(id));
+  setTimeout(()=>{if(calls.get(id)===call&&!document.getElementById('t-'+id)){toast('Не удалось соединиться. Друг не в сети или сеть блокирует прямые звонки');try{call.close()}catch{}drop(id)}},25000);
 }
 function bindCall(call,nick){
   const id=call.peer;calls.set(id,call);busy.delete(id);
